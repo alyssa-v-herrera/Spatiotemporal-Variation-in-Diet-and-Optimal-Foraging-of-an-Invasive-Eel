@@ -1,6 +1,6 @@
 INTRODUCTION
 
-This repository contains the datasets and R script associated with the submitted manuscript entitled "Spatiotemporal variation in diet and optimal foraging of an invasive eel".
+This repository contains the datasets and R script associated with the submitted manuscript entitled "Optimal foraging by an invasive eel: testing predictions with observational data".
 
 ABSTRACT
 
