@@ -1,0 +1,655 @@
+---
+title: "Selectivity_and_Logistic_Regressions"
+author: "Alyssa Herrera"
+date: "2025-07-15"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Loading Packages
+```{r}
+#Loading Packages
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(writexl)
+library(ggplot2)
+library(purrr)
+library(emmeans)
+library(dplyr)
+library(lme4)
+library(broom)
+library(selectapref)
+library(car)
+library(corrplot)
+```
+
+#Selectivity Analysis
+```{r}
+#Loading Data
+Diet_Selectivity <- read.csv("Diet_Selectivity.csv")
+View(Diet_Selectivity)
+
+Diet_Selectivity = Diet_Selectivity %>%
+  group_by(Year, Period, Region, Site)%>%
+  mutate(adjusted_TT_count_plus_one = ifelse(adjusted_TT_count == 0, 1, adjusted_TT_count))%>%
+   mutate(Total_Species_plus_one = sum(adjusted_TT_count_plus_one, na.rm = TRUE))%>%
+  mutate(TT_Proportion_plus_one= (adjusted_TT_count_plus_one/Total_Species_plus_one))%>%
+  mutate(adjusted_TT_Density=(adjusted_TT_count/TT_sample_size))%>%
+  dplyr::select(1:28, adjusted_TT_count_plus_one, Total_Species_plus_one, TT_Proportion_plus_one, everything())
+View(Diet_Selectivity)
+
+# Filter the data for sample sizes larger than 9 eels
+Diet_Selectivity_filtered <- Diet_Selectivity %>%
+  filter(Eel_sample_size > 9)
+
+# Calculate E* using number of prey in environment (Use this code)
+Eelectivity_and_Selectivity <- Diet_Selectivity_filtered %>%
+  filter(!(Prey_Type %in% c("UknownInsects", "Miscellaneous"))) %>%
+  group_by(Year, Site, Region, Period)%>%
+  mutate(Manly_alpha = if_else(
+    !is.na(Eel_Proportion) & !is.na(TT_Proportion) & TT_Proportion != 0,
+    (Eel_Proportion / TT_Proportion) / (sum(Eel_Proportion / TT_Proportion, na.rm = TRUE)),
+    NA_real_))%>%
+  mutate(
+    Foraging_Ratio = Eel_Proportion / TT_Proportion,  # Calculate foraging ratio
+    Foraging_Ratio = ifelse(is.infinite(Foraging_Ratio), NA, Foraging_Ratio),  # Convert Inf to NA
+    Sum_Foraging_Ratio = sum(Foraging_Ratio, na.rm = TRUE),  # Sum ignoring NAs and Infs
+    Sum_Foraging_Ratio = sum(Foraging_Ratio, na.rm = TRUE),  # Sum of foraging ratios
+    n = sum(TT_Proportion > 0, na.rm = TRUE),  # Number of prey types
+    E_star = ((Foraging_Ratio / Sum_Foraging_Ratio) - (1 / n)) /
+             ((Foraging_Ratio / Sum_Foraging_Ratio) + (1 / n)),
+    Li = Eel_Proportion - TT_Proportion)
+View(Eelectivity_and_Selectivity)
+
+#Making Selectivity tables for easier visualization
+
+#Vanderploeg and Scavia Index of Electivity (E*) Table
+E_star_wide <- Eelectivity_and_Selectivity %>%
+  dplyr::select(Year, Region, Site, Period, Prey_Type, E_star) %>%
+  pivot_wider(names_from = Prey_Type, values_from = E_star)%>%
+  dplyr::select(Year, Region, Site, Period, Fish, Shrimp, Crayfish, Odonata, Hemiptera, Coleoptera, Gastropoda, Diptera)%>%
+  mutate(across(Fish:Diptera, ~replace_na(as.character(round(.x, 4)), "+NA")))
+View(E_star_wide)
+
+#Strauss's Linear Index Table
+Li_wide <- Eelectivity_and_Selectivity %>%
+  dplyr::select(Year, Region, Site, Period, Prey_Type, Li) %>%
+  pivot_wider(names_from = Prey_Type, values_from = Li)%>%
+  dplyr::select(Year, Region, Site, Period, Fish, Shrimp, Crayfish, Odonata, Hemiptera, Coleoptera, Gastropoda, Diptera)%>%
+  mutate(across(Fish:Diptera, ~replace_na(as.character(round(.x, 4)), "+NA")))
+View(Li_wide)
+
+#T-tests on Strauss Linear index values to test significance of selection (or avoidance)
+Li_wide$Gastropoda <- as.numeric(Li_wide$Gastropoda)
+t.test(Li_wide$Gastropoda, mu = 0)
+Li_wide$Coleoptera <- as.numeric(Li_wide$Coleoptera)
+t.test(Li_wide$Coleoptera, mu = 0)
+Li_wide$Diptera <- as.numeric(Li_wide$Diptera)
+t.test(Li_wide$Diptera, mu = 0)
+Li_wide$Crayfish <- as.numeric(Li_wide$Crayfish)
+t.test(Li_wide$Crayfish, mu = 0)
+Li_wide$Odonata <- as.numeric(Li_wide$Odonata)
+t.test(Li_wide$Odonata, mu = 0)
+Li_wide$Hemiptera <- as.numeric(Li_wide$Hemiptera)
+t.test(Li_wide$Hemiptera, mu = 0)
+Li_wide$Fish <- as.numeric(Li_wide$Fish)
+t.test(Li_wide$Fish, mu = 0)
+Li_wide$Shrimp <- as.numeric(Li_wide$Shrimp)
+t.test(Li_wide$Shrimp, mu = 0)
+
+#T-tests omitting 0 values
+Li_wide$Crayfish <- as.numeric(Li_wide$Crayfish)
+t.test(Li_wide$Crayfish[Li_wide$Crayfish != 0], mu = 0)
+Li_wide$Diptera <- as.numeric(Li_wide$Diptera)
+t.test(Li_wide$Diptera[Li_wide$Diptera != 0], mu = 0)
+Li_wide$Coleoptera <- as.numeric(Li_wide$Coleoptera)
+t.test(Li_wide$Coleoptera[Li_wide$Coleoptera != 0], mu = 0)
+Li_wide$Gastropoda <- as.numeric(Li_wide$Gastropoda)
+t.test(Li_wide$Gastropoda[Li_wide$Gastropoda != 0], mu = 0)
+```
+
+###Selectivity Plots
+
+```{r}
+#Load data
+Li_wide <- read.csv("Selectivity_Strauss.csv")
+
+#Arranging data for figure
+Li_wide$sample_id <- paste(Li_wide$Year, Li_wide$Region, Li_wide$Site, Li_wide$Period, sep = "_")
+
+prey_types <- c("Fish", "Shrimp", "Crayfish", "Odonata", 
+                "Hemiptera", "Coleoptera", "Gastropoda", "Diptera")
+
+t_results <- data.frame(prey_type = character(),t_value = numeric(),
+  stringsAsFactors = FALSE)
+
+for (prey in prey_types) {
+  values <- as.numeric(Li_wide[[prey]])
+  t_val <- tryCatch(t.test(values, mu = 0)$statistic, error = function(e) NA_real_)
+  t_results <- rbind(t_results, data.frame(prey_type = prey, t_value = t_val))}
+
+# Reshape to long format
+Li_long <- Li_wide %>%
+  pivot_longer(cols = all_of(prey_types), names_to = "prey_type", values_to = "value") %>%
+  mutate(sample_id = paste(Year, Region, Site, Period, sep = "_"))
+
+Li_long <- Li_long %>%
+  group_by(prey_type) %>%
+  mutate(norm_value = value / max(abs(value), na.rm = TRUE)) %>%
+  ungroup()
+
+#Average across site
+# Summarize mean LI per prey type with 95% CI
+LI_summary <- Li_long %>%
+  group_by(prey_type) %>%
+  summarise(
+    mean_LI = mean(value[value != 0], na.rm = TRUE),
+    se = sd(value, na.rm = TRUE) / sqrt(n()),
+    ci_low = mean_LI - qt(0.975, df = n() - 1) * se,
+    ci_high = mean_LI + qt(0.975, df = n() - 1) * se,
+    .groups = "drop")
+
+LI_summary_2 <- Li_long %>%
+  left_join(LI_summary, by = "prey_type")
+
+#with Original data points
+# Set desired order first
+LI_summary_2$prey_type <- factor(LI_summary_2$prey_type,
+                                 levels = c("Crayfish", "Odonata",  "Fish", "Shrimp", "Hemiptera","Coleoptera", "Diptera", "Gastropoda"))
+
+LI_summary_2$prey_type <- factor(LI_summary_2$prey_type,
+  levels = c("Crayfish", "Odonata", "Fish", "Shrimp", "Hemiptera", 
+             "Coleoptera", "Diptera", "Gastropoda"),
+  labels = c("Crayfish", "Dragonfly naiads", "Fish", "Grass shrimp", "Aquatic bugs", "Beetles", "Fly larvae", "Snails"))
+
+#Final Plot
+Linear_Index_Graph <- ggplot(LI_summary_2, aes(x = prey_type, y = value)) + 
+  geom_jitter(data = subset(LI_summary_2, value != 0),
+              width = 0.2, color = "grey60", size = 0.5, alpha = 1) +
+  geom_point(aes(y = mean_LI), 
+             shape = 1, fill = NA, color = "black", size = 1.5, stroke = 0.5) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), 
+                color = "black", width = 0.5, size = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.3) +
+  theme_minimal() +
+  labs(
+    x = "Prey type",
+    y = expression("Linear index ( " * paste(italic(L[i])) * ")")) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    legend.position = "none",
+  panel.grid.major = element_blank(),     
+  panel.grid.minor = element_blank(),     
+  panel.border = element_blank(),         
+  axis.line = element_line(color = "black", size = 0.3)) +
+  scale_y_continuous(
+    limits = c(-0.7, 0.7),
+    breaks = seq(-1, 1, by = 0.2))
+Linear_Index_Graph
+
+ggsave("Linear_Index_Graph2.eps", Linear_Index_Graph, width = 3.307, height = 3, dpi = 800)
+```
+
+#Energetics GLM
+```{r}
+prey_calories <- read.csv("Prey_Calories.csv")
+View(prey_calories)
+
+names(prey_calories)[names(prey_calories) == "Prey Type"] <- "Prey.Type"
+
+#check/correct normality
+hist(prey_calories$Calories)
+
+#log tranform variable
+prey_calories$logCalories <- log(prey_calories$Calories)
+hist(prey_calories$logCalories)
+
+#Model
+calories.glm = lm(prey_calories$logCalories ~ Prey.Type, data = prey_calories)
+summary(calories.glm)
+plot(calories.glm)
+
+#Pairwise model
+pairs(emmeans(calories.glm, ~ Prey.Type))
+qqnorm(prey_calories$logCalories)
+
+shapiro.test(residuals(calories.glm))
+leveneTest(calories.glm)
+
+#GLM with Gamma distribution for skewness
+calories.glm_gamma <- glm(Calories ~ Prey.Type, data = prey_calories,family = Gamma(link = "log"))
+summary(calories.glm_gamma)
+
+pairs(emmeans(calories.glm_gamma, ~ Prey.Type))
+
+plot(calories.glm_gamma)
+
+#Checking Heteroscedasticity
+plot(fitted(calories.glm_gamma), 
+     residuals(calories.glm_gamma, type = "deviance"),
+     xlab = "Fitted values", 
+     ylab = "Deviance residuals")+
+abline(h = 0, lty = 2)
+
+#Residuals check
+qqnorm(resid_dev)
+
+#Difference in Medians
+kruskal.test(Calories ~ Prey.Type, data = prey_calories)
+
+library(FSA)
+dunnTest(Calories ~ Prey.Type, data = prey_calories, method="bonferroni")
+```
+
+#Logistic Regressions
+```{r}
+#Loading Data
+eels2 <- read.csv("Logistic_Regression_Data.csv")
+
+#Correlation Matrix
+# Select the relevant columns for correlation analysis
+selected_columns <- c("TL_mm", "TT_Mean_Count_Fish", "TT_Mean_Count_Odonata", "TT_Mean_Count_Shrimp", "TT_Mean_Count_Hemiptera", "TT_Mean_Count_Crayfish")
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(eels2[, selected_columns], use = "complete.obs")
+corrplot(correlation_matrix, method = "color", 
+         type = "upper", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         addCoef.col = "black")
+
+#Size Cutoff
+eels2_large<- subset(eels2, TL_mm >250)
+```
+
+##Crayfish
+```{r}
+#FITTING THE MODEL (all sizes of eels)
+Crayfish_glm = glm(Eel_Presence_Crayfish ~ TL_mm+ TT_Mean_Count_Crayfish+TT_Mean_Count_Fish+TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp, family = "binomial" (link = "logit"), data = eels2)
+summary(Crayfish_glm)
+
+# Stepwise selection (backward)
+drop1(Crayfish_glm, test = "Chisq")
+
+#reduced model
+Crayfish_glm = glm(Eel_Presence_Crayfish ~ (TL_mm)+ (TT_Mean_Count_Crayfish)+ (TT_Mean_Count_Shrimp), family = "binomial" (link = "logit"), data = eels2)
+summary(Crayfish_glm)
+
+# Stepwise selection (forward)
+add1(Crayfish_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+library(effects)
+plot(allEffects(Crayfish_glm), multiline = TRUE, rug = TRUE)
+
+ggplot(eels2, aes(x = TT_Mean_Count_Crayfish, y = Eel_Presence_Crayfish)) +
+  geom_jitter(height = 0.05, width = 0, alpha = 0.5, color = "blue") +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"),
+              se = TRUE, color = "red") +
+  labs(x = "Crayfish Density", y = "Eel Presence (0/1)",
+       title = "Eel Presence vs. Crayfish Density") +
+  theme_minimal()
+
+vif(Crayfish_glm)
+
+#MODEL WITH LARGE EELS ONLY (>250mm TL)
+#Full model
+Crayfish_glm = glm(Eel_Presence_Crayfish ~ TL_mm+ TT_Mean_Count_Crayfish +TT_Mean_Count_Fish+TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata+TT_Mean_Count_Shrimp, family = "binomial" (link = "logit"), data = eels2_large)
+summary(Crayfish_glm)
+vif(Crayfish_glm)
+
+# Stepwise selection (backward)
+drop1(Crayfish_glm, test = "Chisq")
+
+#Final (reduced) model
+Crayfish_glm = glm(Eel_Presence_Crayfish ~ TL_mm+ TT_Mean_Count_Crayfish +TT_Mean_Count_Shrimp, family = "binomial" (link = "logit"), data = eels2_large)
+summary(Crayfish_glm)
+
+# Stepwise selection (forward)
+add1(Crayfish_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+eels_clean <- na.omit(eels2_large[, c("Eel_Presence_Crayfish","Eel_Presence_Fish", "Eel_Presence_Odonata", "Eel_Presence_Shrimp", "Eel_Presence_Hemiptera",
+                                      "TL_mm",
+                                      "TT_Mean_Count_Crayfish",
+                                      "TT_Mean_Count_Fish",
+                                      "TT_Mean_Count_Hemiptera",
+                                      "TT_Mean_Count_Odonata",
+                                      "TT_Mean_Count_Shrimp")])
+
+#CONCORDANCE STATISTIC
+library(ROCR)
+pred <- predict(Crayfish_glm, type = "response")
+
+# Prediction and performance objects
+pred_obj <- prediction(pred, eels_clean$Eel_Presence_Crayfish)
+
+perf <- performance(pred_obj, "tpr", "fpr")
+
+length(pred)
+length(eels_clean$Eel_Presence_Crayfish)
+# Plot ROC curve
+plot(perf, colorize = TRUE)
+
+# AUC
+auc_obj <- performance(pred_obj, "auc")
+auc_obj@y.values[[1]]
+
+## MODEL SUMMARY TABLE
+model_summary <- summary(Crayfish_glm)
+# Extract coefficients and p-values
+coefficients <- model_summary$coefficients
+p_values <- coefficients[, "Pr(>|z|)"]
+odds_ratios <- exp(coefficients[, "Estimate"])
+conf_intervals <- exp(confint(Crayfish_glm))
+# Calculate probabilities from the odds ratios:
+probabilities <- odds_ratios / (1 + odds_ratios)
+# Combine into a summary table
+results.cray <- data.frame(
+  Predictor = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std_Error = coefficients[, "Std. Error"],
+  Odds_Ratio = odds_ratios,
+  `2.5% CI` = conf_intervals[, 1],
+  `97.5% CI` = conf_intervals[, 2],
+  Probability = probabilities,
+  P_Value = p_values)
+results.cray[, -1] <- round(results.cray[, -1], 3)
+View(results.cray)
+```
+
+##Fish
+```{r}
+#Full model with all eels of all sizes
+Fish_glm = glm(Eel_Presence_Fish ~ TL_mm+TT_Mean_Count_Crayfish+ TT_Mean_Count_Fish+TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata+ TT_Mean_Count_Shrimp, family = "binomial", data = eels2)
+summary(Fish_glm)
+
+# Stepwise selection (backward)
+drop1(Fish_glm, test = "Chisq")
+
+#reduced model
+Fish_glm = glm(Eel_Presence_Fish ~ TL_mm+TT_Mean_Count_Odonata, family = "binomial", data = eels2)
+summary(Fish_glm)
+vif(Fish_glm)
+
+# Stepwise selection (forward)
+add1(Fish_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#MODEL WITH LARGE EELS ONLY (>250mm TL)
+#Full model
+Fish_glm = glm(Eel_Presence_Fish ~ TL_mm+ TT_Mean_Count_Crayfish+TT_Mean_Count_Fish+ TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata+ TT_Mean_Count_Shrimp+TT_Mean_Count_Fish, family = "binomial", data = eels2_large)
+summary(Fish_glm)
+vif(Fish_glm)
+
+# Stepwise selection (backward)
+drop1(Fish_glm, test = "Chisq")
+
+#Final (reduced) model
+Fish_glm = glm(Eel_Presence_Fish ~ TL_mm+TT_Mean_Count_Odonata, family = "binomial", data = eels_clean)
+summary(Fish_glm)
+vif(Fish_glm)
+
+# Stepwise selection (forward)
+add1(Fish_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#CONCORDANCE STATISTIC
+pred <- predict(Fish_glm, type = "response")
+length(pred)
+length(eels_clean$Eel_Presence_Fish)
+# Prediction and performance objects
+pred_obj <- prediction(pred, eels_clean$Eel_Presence_Fish)
+perf <- performance(pred_obj, "tpr", "fpr")
+# Plot ROC curve
+plot(perf, colorize = TRUE)
+# AUC
+auc_obj <- performance(pred_obj, "auc")
+auc_obj@y.values[[1]]  
+
+# MODEL SUMMARY
+model_summary <- summary(Fish_glm)
+# Extract coefficients and p-values
+coefficients <- model_summary$coefficients
+p_values <- coefficients[, "Pr(>|z|)"]
+odds_ratios <- exp(coefficients[, "Estimate"])
+conf_intervals <- exp(confint(Fish_glm))
+probabilities <- odds_ratios / (1 + odds_ratios)
+# Combine into a summary table
+results.fish <- data.frame(
+  Predictor = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std_Error = coefficients[, "Std. Error"],
+  Odds_Ratio = odds_ratios,
+  `2.5% CI` = conf_intervals[, 1],
+  `97.5% CI` = conf_intervals[, 2],
+  Probability = probabilities,
+  P_Value = p_values)
+results.fish[, -1] <- round(results.fish[, -1], 3)
+View(results.fish)
+```
+
+##Odonata
+```{r}
+#Fitting the model (with all eels of all sizes)
+Odonata_glm = glm(Eel_Presence_Odonata ~ TL_mm+ TT_Mean_Count_Crayfish+ TT_Mean_Count_Fish+ +TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp , family = "binomial" (link = "logit"), data = eels2)
+summary(Odonata_glm)
+vif(Odonata_glm)
+
+# Stepwise selection (backward)
+drop1(Odonata_glm, test = "Chisq")
+
+#Reduced Model
+Odonata_glm = glm(Eel_Presence_Odonata ~ TT_Mean_Count_Odonata+ TT_Mean_Count_Crayfish, family = "binomial", data = eels2)
+summary(Odonata_glm)
+
+# Stepwise selection (forward)
+add1(Odonata_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#MODEL WITH LARGE EELS ONLY (>250mm TL)
+#Full model
+Odonata_glm = glm(Eel_Presence_Odonata ~ TL_mm+ TT_Mean_Count_Crayfish+ TT_Mean_Count_Fish +TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata+TT_Mean_Count_Shrimp , family = "binomial" (link = "logit"), data = eels2_large)
+summary(Odonata_glm)
+
+# Stepwise selection (backward)
+drop1(Odonata_glm, test = "Chisq")
+
+#Final (reduced) model
+Odonata_glm = glm(Eel_Presence_Odonata ~ TT_Mean_Count_Odonata+ TT_Mean_Count_Crayfish, family = "binomial" (link = "logit"), data = eels2_large)
+summary(Odonata_glm)
+vif(Odonata_glm)
+
+# Stepwise selection (forward)
+add1(Odonata_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#CONCORDANCE STATISTIC
+pred <- predict(Odonata_glm, type = "response")
+# Prediction and performance objects
+pred_obj <- prediction(pred, eels_clean$Eel_Presence_Odonata)
+perf <- performance(pred_obj, "tpr", "fpr")
+# Plot ROC curve
+plot(perf, colorize = TRUE)
+# AUC
+auc_obj <- performance(pred_obj, "auc")
+auc_obj@y.values[[1]]  
+
+#MODEL SUMMARY
+model_summary <- summary(Odonata_glm)
+# Extract coefficients and p-values
+coefficients <- model_summary$coefficients
+p_values <- coefficients[, "Pr(>|z|)"]
+# Calculate odds ratios and confidence intervals
+odds_ratios <- exp(coefficients[, "Estimate"])
+conf_intervals <- exp(confint(Odonata_glm))
+probabilities <- odds_ratios / (1 + odds_ratios)
+# Combine into a summary table
+results.odonata <- data.frame(
+  Predictor = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std_Error = coefficients[, "Std. Error"],
+  Odds_Ratio = odds_ratios,
+  `2.5% CI` = conf_intervals[, 1],
+  `97.5% CI` = conf_intervals[, 2],
+  Probability = probabilities,
+  P_Value = p_values)
+results.odonata[, -1] <- round(results.odonata[, -1], 3)
+View(results.odonata)
+```
+
+##Shrimp
+```{r}
+#Fitting the model (with all eels of all sizes)
+Shrimp_glm = glm(Eel_Presence_Shrimp ~ TL_mm  +TT_Mean_Count_Crayfish+ TT_Mean_Count_Fish +TT_Mean_Count_Hemiptera+TT_Mean_Count_Shrimp, family = "binomial", data = eels2)
+summary(Shrimp_glm)
+vif(Shrimp_glm)
+
+
+# Stepwise selection (backward)
+drop1(Shrimp_glm, test = "Chisq")
+
+#reduced model
+Shrimp_glm = glm(Eel_Presence_Shrimp ~ TT_Mean_Count_Shrimp +TT_Mean_Count_Crayfish, family = "binomial", data = eels2)
+summary(Shrimp_glm)
+
+# Stepwise selection (forward)
+add1(Shrimp_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#MODEL WITH LARGE EELS ONLY (>250mm TL)
+#Full model
+Shrimp_glm = glm(Eel_Presence_Shrimp ~ TL_mm  +TT_Mean_Count_Crayfish+ TT_Mean_Count_Fish +TT_Mean_Count_Hemiptera+TT_Mean_Count_Odonata+ TT_Mean_Count_Shrimp, family = "binomial", data = eels2_large)
+summary(Shrimp_glm)
+
+# Stepwise selection (backward)
+drop1(Shrimp_glm, test = "Chisq")
+
+#Final (reduced) model
+Shrimp_glm = glm(Eel_Presence_Shrimp ~ TT_Mean_Count_Shrimp +TT_Mean_Count_Crayfish , family = "binomial", data = eels2_large)
+summary(Shrimp_glm)
+
+# Stepwise selection (forward)
+add1(Shrimp_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#CONCORDANCE STATISTIC
+pred <- predict(Shrimp_glm, type = "response")
+# Prediction and performance objects
+pred_obj <- prediction(pred, eels_clean$Eel_Presence_Shrimp)
+perf <- performance(pred_obj, "tpr", "fpr")
+# Plot ROC curve
+plot(perf, colorize = TRUE)
+# AUC
+auc_obj <- performance(pred_obj, "auc")
+auc_obj@y.values[[1]]
+
+#MODEL SUMMARY
+model_summary <- summary(Shrimp_glm)
+# Extract coefficients and p-values
+coefficients <- model_summary$coefficients
+p_values <- coefficients[, "Pr(>|z|)"]
+odds_ratios <- exp(coefficients[, "Estimate"])
+conf_intervals <- exp(confint(Shrimp_glm))
+probabilities <- odds_ratios / (1 + odds_ratios)
+# Combine into a summary table
+results.shrimp <- data.frame(
+  Predictor = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std_Error = coefficients[, "Std. Error"],
+  Odds_Ratio = odds_ratios,
+  `2.5% CI` = conf_intervals[, 1],
+  `97.5% CI` = conf_intervals[, 2],
+  Probability = probabilities,
+  P_Value = p_values)
+results.shrimp[, -1] <- round(results.shrimp[, -1], 3)
+View(results.shrimp)
+```
+
+##Hemiptera
+```{r}
+#Fitting the model (with all eels of all sizes)
+Hemiptera_glm = glm(Eel_Presence_Hemiptera ~ TL_mm+ TT_Mean_Count_Crayfish+ TT_Mean_Count_Fish +TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata+TT_Mean_Count_Shrimp, family = "binomial", data = eels2)
+summary(Hemiptera_glm)
+vif(Hemiptera_glm)
+
+# Stepwise selection (backward)
+drop1(Hemiptera_glm, test = "Chisq")
+
+#reduced model
+Hemiptera_glm = glm(Eel_Presence_Hemiptera ~TT_Mean_Count_Crayfish + TT_Mean_Count_Odonata , family = "binomial", data = eels2)
+summary(Hemiptera_glm)
+
+# Stepwise selection (forward)
+add1(Hemiptera_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#MODEL WITH LARGE EELS ONLY (>250mm TL)
+#Full model
+Hemiptera_glm = glm(Eel_Presence_Hemiptera ~ TL_mm+ TT_Mean_Count_Crayfish + TT_Mean_Count_Fish +TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata+ TT_Mean_Count_Shrimp, family = "binomial", data = eels2_large)
+summary(Hemiptera_glm)
+
+# Stepwise selection (backward)
+drop1(Hemiptera_glm, test = "Chisq")
+
+#Final (reduced ) model
+Hemiptera_glm = glm(Eel_Presence_Hemiptera ~ TT_Mean_Count_Crayfish + TT_Mean_Count_Odonata, family = "binomial", data = eels2_large)
+summary(Hemiptera_glm)
+vif(Hemiptera_glm)
+
+# Stepwise selection (forward)
+add1(Hemiptera_glm,
+     scope = ~ TL_mm + TT_Mean_Count_Crayfish + TT_Mean_Count_Fish + TT_Mean_Count_Hemiptera + TT_Mean_Count_Odonata +TT_Mean_Count_Shrimp,test = "Chisq")
+
+#CONCORDANCE STATISTIC
+pred <- predict(Hemiptera_glm, type = "response")
+# Prediction and performance objects
+pred_obj <- prediction(pred, eels_clean$Eel_Presence_Hemiptera)
+perf <- performance(pred_obj, "tpr", "fpr")
+# Plot ROC curve
+plot(perf, colorize = TRUE)
+# AUC
+auc_obj <- performance(pred_obj, "auc")
+auc_obj@y.values[[1]] 
+
+#MODEL SUMMARY
+model_summary <- summary(Hemiptera_glm)
+# Extract coefficients and p-values
+coefficients <- model_summary$coefficients
+p_values <- coefficients[, "Pr(>|z|)"]
+odds_ratios <- exp(coefficients[, "Estimate"])
+conf_intervals <- exp(confint(Hemiptera_glm))
+probabilities <- odds_ratios / (1 + odds_ratios)
+# Combine into a summary table
+results.hemiptera <- data.frame(
+  Predictor = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std_Error = coefficients[, "Std. Error"],
+  Odds_Ratio = odds_ratios,
+  `2.5% CI` = conf_intervals[, 1],
+  `97.5% CI` = conf_intervals[, 2],
+  Probability = probabilities,
+  P_Value = p_values)
+results.hemiptera[, -1] <- round(results.hemiptera[, -1], 3)
+View(results.hemiptera)
+```
+
+```{r}
+combined_models <- bind_rows(
+  results.cray %>% mutate(Prey = "Crayfish"),
+  results.fish     %>% mutate(Prey = "Fish"),
+  results.odonata   %>% mutate(Prey = "Dragonfly naiads"),
+  results.shrimp %>% mutate(Prey = "Grass shrimp"),
+  results.hemiptera %>% mutate(Prey = "Aquatic bugs")
+)
+View(combined_models)
+write_xlsx(combined_models, path = "C:/Users/Alyssa/OneDrive - Florida International University/Asian Swamp Eel Dissection Data (USE ME)/Figures and Results/Logistic Regressions/Full_Logistic_Models_Regional.xlsx")
+```
+
